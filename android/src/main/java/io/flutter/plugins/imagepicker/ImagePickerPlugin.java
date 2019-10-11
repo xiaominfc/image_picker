@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,10 @@ import android.app.Activity;
 import android.app.Application;
 import android.os.Bundle;
 import android.os.Environment;
-import androidx.annotation.VisibleForTesting;
+import android.os.Handler;
+import android.os.Looper;
+import android.support.annotation.VisibleForTesting;
+
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.PluginRegistry;
@@ -35,7 +38,7 @@ public class ImagePickerPlugin implements MethodChannel.MethodCallHandler {
       // we stop the registering process immediately because the ImagePicker requires an activity.
       return;
     }
-    ImagePickerCache.setUpWithActivity(registrar.activity());
+    final ImagePickerCache cache = new ImagePickerCache(registrar.activity());
 
     final MethodChannel channel = new MethodChannel(registrar.messenger(), CHANNEL);
 
@@ -44,7 +47,7 @@ public class ImagePickerPlugin implements MethodChannel.MethodCallHandler {
     final ExifDataCopier exifDataCopier = new ExifDataCopier();
     final ImageResizer imageResizer = new ImageResizer(externalFilesDirectory, exifDataCopier);
     final ImagePickerDelegate delegate =
-        new ImagePickerDelegate(registrar.activity(), externalFilesDirectory, imageResizer);
+        new ImagePickerDelegate(registrar.activity(), externalFilesDirectory, imageResizer, cache);
 
     registrar.addActivityResultListener(delegate);
     registrar.addRequestPermissionsResultListener(delegate);
@@ -78,28 +81,74 @@ public class ImagePickerPlugin implements MethodChannel.MethodCallHandler {
           }
 
           @Override
-          public void onActivityDestroyed(Activity activity) {}
+          public void onActivityDestroyed(Activity activity) {
+            if (activity == registrar.activity()) {
+              ((Application) registrar.context()).unregisterActivityLifecycleCallbacks(this);
+            }
+          }
 
           @Override
           public void onActivityStopped(Activity activity) {}
         };
 
-    if (this.registrar != null
-        && this.registrar.activity() != null
-        && this.registrar.activity().getApplication() != null) {
-      this.registrar
-          .activity()
-          .getApplication()
+    if (this.registrar != null) {
+      ((Application) this.registrar.context())
           .registerActivityLifecycleCallbacks(this.activityLifecycleCallbacks);
     }
   }
 
+  // MethodChannel.Result wrapper that responds on the platform thread.
+  private static class MethodResultWrapper implements MethodChannel.Result {
+    private MethodChannel.Result methodResult;
+    private Handler handler;
+
+    MethodResultWrapper(MethodChannel.Result result) {
+      methodResult = result;
+      handler = new Handler(Looper.getMainLooper());
+    }
+
+    @Override
+    public void success(final Object result) {
+      handler.post(
+          new Runnable() {
+            @Override
+            public void run() {
+              methodResult.success(result);
+            }
+          });
+    }
+
+    @Override
+    public void error(
+        final String errorCode, final String errorMessage, final Object errorDetails) {
+      handler.post(
+          new Runnable() {
+            @Override
+            public void run() {
+              methodResult.error(errorCode, errorMessage, errorDetails);
+            }
+          });
+    }
+
+    @Override
+    public void notImplemented() {
+      handler.post(
+          new Runnable() {
+            @Override
+            public void run() {
+              methodResult.notImplemented();
+            }
+          });
+    }
+  }
+
   @Override
-  public void onMethodCall(MethodCall call, MethodChannel.Result result) {
+  public void onMethodCall(MethodCall call, MethodChannel.Result rawResult) {
     if (registrar.activity() == null) {
-      result.error("no_activity", "image_picker plugin requires a foreground activity.", null);
+      rawResult.error("no_activity", "image_picker plugin requires a foreground activity.", null);
       return;
     }
+    MethodChannel.Result result = new MethodResultWrapper(rawResult);
     int imageSource;
     switch (call.method) {
       case METHOD_CALL_IMAGE:

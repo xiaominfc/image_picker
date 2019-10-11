@@ -1,7 +1,3 @@
-# 解决androidX使用的冲突 修改了一下依赖库
-
-
-
 # Image Picker plugin for Flutter
 
 [![pub package](https://img.shields.io/pub/v/image_picker.svg)](https://pub.dartlang.org/packages/image_picker)
@@ -75,7 +71,7 @@ Android system -- although very rarely -- sometimes kills the MainActivity after
 
 ```dart
 Future<void> retrieveLostData() async {
-  final RetrieveLostDataResponse response =
+  final LostDataResponse response =
       await ImagePicker.retrieveLostData();
   if (response == null) {
     return;
